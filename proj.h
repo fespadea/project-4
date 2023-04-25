@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <mpi.h>
 
+// calculate the frobenius norm squared of a matrix
 double normFro2(double** A, int n, int m){
     double sum = 0;
     for(int i = 0; i < n; i++){
@@ -16,6 +17,7 @@ double normFro2(double** A, int n, int m){
     return totalSum;
 }
 
+// calculate the 1 norm of a matrix
 double norm1(double** A, int n, int m, int rank){
     double sumMax = 0;
     for(int j = 0; j < m; j++){
@@ -36,6 +38,7 @@ double norm1(double** A, int n, int m, int rank){
 }
 
 // Code from geeksforgeeks: https://www.geeksforgeeks.org/program-for-rank-of-matrix/
+// just used to swap values (used by the rankOfMatrix function)
 void swap(double ** mat, int R, int C, int row1, int row2,
           int col)
 {
@@ -48,6 +51,7 @@ void swap(double ** mat, int R, int C, int row1, int row2,
 }
 
 // Code from geeksforgeeks: https://www.geeksforgeeks.org/program-for-rank-of-matrix/
+// calculates the rank of a matrix
 int rankOfMatrix(double ** mat, int R, int C)
 {
     double ** matCopy = (double **)malloc(R*sizeof(double*));
@@ -132,7 +136,7 @@ int rankOfMatrix(double ** mat, int R, int C)
     return rank;
 }
 
-
+// used to sort the probabilities array below
 int cmp (const void * a, const void * b) {
     double doubleA = *((double *) a);
     double doubleB = *((double *) b);
@@ -152,7 +156,7 @@ double ** matrixSparsification(double ** A, int n, int m, double epsilon, double
     MPI_Bcast(&k, 1, MPI_INT, 0, MPI_COMM_WORLD);
     int s = sMult * k * (totaln + m);
 
-    // calculate probabilities for each value of being chosen
+    // calculate probabilities of each element being chosen
     int totalLength = n*m;
     double * probabilities = (double *)malloc(sizeof(double)*(totalLength * (rank == 0 ? nranks : 1)));
     double sum = 0;
@@ -167,25 +171,29 @@ double ** matrixSparsification(double ** A, int n, int m, double epsilon, double
     sum = totalSum;
 
 
+    // choose the indexes using the probabilities
     int * choices = (int *)malloc(sizeof(int)*s);
     if(rank != 0){
+        // send our probabilities to rank 0 to select the elements to sample
         MPI_Request request;
         MPI_Isend(probabilities, totalLength, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD, &request);
         MPI_Status status;
         MPI_Waitall(1, &request, &status);
 
+        // receive the selected elements from rank 0 that are in our batch
         int i = 0;
         do{
             MPI_Irecv(choices + i, 1, MPI_INT, 0, 1, MPI_COMM_WORLD, &request);
             MPI_Waitall(1, &request, &status);
         } while(choices[i++] != -1);
     } else{
+        // receive all the probabilities from the other ranks
         MPI_Request * requests = (MPI_Request *)malloc(sizeof(MPI_Request)*(nranks-1));
         for(int i = 1; i < nranks; i++){
             MPI_Irecv(probabilities + i*totalLength, totalLength, MPI_DOUBLE, i, 1, MPI_COMM_WORLD, &requests[i-1]);
         }
 
-        // choose the indexes using the probabilities
+        // select the elements to sample using the probabilities we consolidated
         double * probs = (double *)malloc(sizeof(double)*s);\
         for(int i = 0; i < s; i++){
             probs[i] = ((double)rand() / (double)RAND_MAX) * sum;
@@ -205,6 +213,7 @@ double ** matrixSparsification(double ** A, int n, int m, double epsilon, double
                 if(j < totalLength){
                     choices[p] = j;
                 } else{
+                    // inform the other ranks if an element from their batch has been selected
                     choices[p] = -2;
                     int choice = j % totalLength;
                     MPI_Isend(&choice, 1, MPI_INT, j/totalLength, 1, MPI_COMM_WORLD, &request);
@@ -214,6 +223,7 @@ double ** matrixSparsification(double ** A, int n, int m, double epsilon, double
             }
         }
 
+        // inform the other ranks that the selection process has been completed
         for(int i = 1; i < nranks; i++){
             int done = -1;
             MPI_Send(&done, 1, MPI_INT, i, 1, MPI_COMM_WORLD);
@@ -223,7 +233,7 @@ double ** matrixSparsification(double ** A, int n, int m, double epsilon, double
     }
 
 
-    // combine the chosen values into a sparse matrix
+    // sample the chosen elements into the sparse matrix
     double ** ATilde = (double**)calloc(n * sizeof(double*), sizeof(double*));
     for(int i = 0; i < n; i++){
         ATilde[i] = (double*)calloc(m * sizeof(double), sizeof(double*));
@@ -242,9 +252,11 @@ double ** matrixSparsification(double ** A, int n, int m, double epsilon, double
     free(probabilities);
     free(choices);
 
+    // return the sparse matrix
     return ATilde;
 }
 
+// calculate the error between two matrices (used to compare the original and sparse matrices)
 double error(double ** A, double ** ATilde, int n, int m, int rank){
     double ** ADiff = (double**)malloc(n * sizeof(double*));
     for(int i = 0; i < n; i++){
